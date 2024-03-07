@@ -1,0 +1,7 @@
+# depslib dependency file v1.0
+1567781303 source:g:\project summer 2019\random points\main.c
+	<stdio.h>
+	<math.h>
+	<string.h>
+	<stdlib.h>
+

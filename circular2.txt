@@ -1,0 +1,616 @@
+#include<stdio.h>
+#include<math.h>
+#include<string.h>
+#include<stdlib.h>
+
+int nx, ny, np, maxiter, inumber_time_steps;
+int neighbor[1000000][8];
+double T[1000000], Told[1000000], s_t[1000000];
+double dx, dy, hmin, er_mx,rat;
+double x[1000000], y[1000000];
+double omega, lx, ly, sigma, det;
+double ainv[8][8], a[8][8], d2phid2[8], a_coeff[1000000][8];
+
+
+void read_point_data();
+void neighbor_points();
+void initialise_var();
+void source_term();
+void coeff_mat();
+void boundary_conditions();
+double solve();
+void local_phi_coefficients(int i, int j, int ij);
+void local_phi_coefficients_inv(int np);
+double determinant(double a[8][8], int np);
+void cofactor(double a[8][8], double np);
+void transpose(double a1[8][8], double b1[8][8], double c1);
+void d2fd2(int ij);
+void find_coeff_A(int i);
+
+int main() {
+   int i, j, ij, k, l, iter;
+   // no. of internal points in x and y directions
+	nx = 18;
+   ny = 18;
+   // domain length in x and y
+   lx = 10;
+	ly = 10;
+	// grid spacing in x and y
+   dx =lx/(nx+1);
+   dy = ly/(ny+1);
+   rat= pow(19,pow(18,-1));
+
+   // find min grid spacing and compute sigma
+   hmin = dx;
+   FILE *fptr;
+   fptr = fopen("GPcond.dat","w");
+
+   if (hmin > dy) {
+		hmin = dy;
+	}
+   sigma = 40*hmin;
+
+
+	//printf ("dx = %lf\n", dx);
+	np =8;
+   read_point_data();
+
+   neighbor_points();
+//   exit(0);
+	initialise_var();
+   source_term();
+   coeff_mat();
+   for (iter = 1; iter <= 20000; iter++) {
+		boundary_conditions();
+		er_mx = solve();
+		//printf("%lf %d\n", er_mx, iter);
+		if (er_mx > 1e-4) {
+			for (i = 1; i <= nx; i++) {
+				for (j = 1; j <= ny; j++) {
+			  		ij  = i-1 + (j-1)*nx;
+		      	Told[neighbor[ij][0]] = T[neighbor[ij][0]];
+				}
+			}
+		}
+		else {
+			break;
+		}
+	}
+	/*for (j = 0; j <= ny+1; j++) {
+		i = 0;
+		ij = i + j*(nx+2);
+      printf ("T[%d] = %lf \n", ij, T[ij]);
+	}*/
+  	for (j = 0; j <= ny+1; j++) {
+	   for (i = 0; i <= nx+1; i++) {
+
+			ij = i + j*(nx+2);
+         fprintf (fptr,"%lf, %lf, %lf\n", x[ij], y[ij], T[ij]);
+		}
+	}
+	return 0;
+}
+
+double solve() {
+	int i, j, ij, ij1, ij_mx, i_mx, j_mx;
+   double  err, er_mx1;
+   er_mx1 = 0.;
+
+	for (i = 1; i <= nx; i++) {
+		for (j = 1; j <= ny; j++) {
+		   ij  = i-1 + (j-1)*nx;
+		   //printf(" %d %lf %lf %lf\n", ij, T[neighbor[ij][0]], Told[neighbor[ij][0]], T[neighbor[ij][0]] - Told[neighbor[ij][0]]);
+		   /*if (ij==0){
+            printf(" %d %d %d\n", ij, neighbor[ij][0], neighbor[ij][7]);
+		   }*/
+
+         T[neighbor[ij][0]] = (s_t[neighbor[ij][0]]- a_coeff[ij][1]*Told[neighbor[ij][1]] - a_coeff[ij][2]*Told[neighbor[ij][2]] - a_coeff[ij][3]*Told[neighbor[ij][3]] - a_coeff[ij][4]*Told[neighbor[ij][4]] - a_coeff[ij][5]*Told[neighbor[ij][5]] - a_coeff[ij][6]*Told[neighbor[ij][6]] - a_coeff[ij][7]*Told[neighbor[ij][7]])/ a_coeff[ij][0];
+
+			//printf("%d %d %d %lf %lf %lf\n", i, j, ij, T[neighbor[ij][2]], Told[neighbor[ij][2]], T[neighbor[ij][2]] - Told[neighbor[ij][2]]);
+         err = 0;
+			err = fabs(T[neighbor[ij][0]] - Told[neighbor[ij][0]]);
+         //printf("%lf %lf\n", err, er_mx1);
+			if (err > er_mx1) {
+				er_mx1 = err;
+				ij_mx = neighbor[ij][0];
+            i_mx  = i;
+				j_mx  = j;
+            //printf("wwwwwwwww %lf %d %d %d\n", er_mx1, ij_mx, i, j);
+			}
+
+		}
+	}
+//printf("wwwwwwwww\n");
+   //printf("%d %d %d max_err = %lf\n", ij_mx, i_mx, j_mx, er_mx1);
+   return (er_mx1);
+}
+
+
+void read_point_data() {
+   /* Function to read grid coordinates
+   x[0], x[nx+1], y[0], y[ny+1] => boundary point coordinates */
+	int i, j, ij;
+	x[0]=0; y[0]=0; x[(ny+1)*(nx+2)]=0;
+	for (i = 0; i <= nx+1; i++) {
+        j=0; ij= i + j*(nx+2) ;
+        y[ij]=0;
+        if (i > 0){
+        x[ij] = (pow(rat,i-1))*dx;
+        }
+        j=ny+1; ij= i + j*(nx+2) ;
+        y[ij]=ly;
+        if (i > 0){
+        x[ij] = (pow(rat,i-1))*dx;
+        }
+	}
+	for (j = 0; j <= ny+1; j++) {
+        i=0; ij= i + j*(nx+2) ;
+        x[ij]=0;
+        if (j>0){
+            y[ij] = (pow(rat,j-1))*dy;
+        }
+
+        i=nx+1; ij= i + j*(nx+2) ;
+        x[ij]=lx;
+        if (j>0){
+            y[ij] = (pow(rat,j-1))*dy;
+	}
+	}
+   for (j = 1; j <= ny; j++) {
+		for (i = 1; i <= nx; i++) {
+			ij = i + j*(nx+2);
+                x[ij] = (pow(rat,i-1))*dx;
+                y[ij] = (pow(rat,j-1))*dy;
+         if (ij==22){
+         printf ("%d, x[%d] = %lf, y[%d] = %lf\n", ij, ij, x[ij], ij, y[ij]);
+		}
+		}
+	}
+}
+double eucdist(int a,int b){
+    double xcor,ycor,dist;
+    xcor = pow((x[a]-x[b]),2);
+    ycor = pow((y[a]-y[b]),2);
+    dist = pow((xcor + ycor),0.5);
+    //printf(" %lf", dist);
+    return(dist);
+
+}
+
+// Distance of all points from the given point
+double* alldistance(int ij1){
+    int m,n,mn,counting;
+    counting = ((nx+2)*(ny+2));
+    double radialdist[counting];
+    for (n=0; n<counting;n++){
+            radialdist[n]=eucdist(ij1,n);
+    }
+    if (ij1==21){
+        for(m=0;m<counting+1;m++ ){
+           printf(" %lf",(radialdist[22]) );
+    }
+    }
+      return(radialdist);
+
+    }
+    //printf("\n");
+
+// Sorting the radialdistance to obtain closest positions
+int* sortradist(double* radist){
+    int counting,i,m,d,templocation, position;
+    counting=(nx+2)*(ny+2);
+    int locationarray[counting];
+    double testarr[(nx+2)*(ny+2)],temp;
+
+
+    for (i=0; i<counting; i++){
+        testarr[i] = *(radist + i);
+    }
+    /*for(m=0;m<counting;m++ ){
+        printf(" %lf",testarr[m] );
+    }*/
+    for (i=0; i<counting; i++){
+        locationarray[i]=i;
+       // printf(" %d",locationarray[i]);
+    }
+    for (i=0;i<counting;i++){
+        position = i;
+        for (d = i + 1; d < counting; d++)
+    {
+      if (testarr[position] > testarr[d])
+        position = d;
+    }
+    if (position != i)
+    {
+      temp = testarr[i];
+      testarr[i] = testarr[position];
+      testarr[position] = temp;
+      // Swapping the location of smaller radial distances
+      templocation = locationarray[i];
+      locationarray[i] = position;
+      locationarray[position] = templocation;
+    }
+
+    }
+    //for(m=0;m<counting;m++ ){
+      //  printf(" %d",locationarray[0] );
+    //}
+   // printf("\n");
+   return(locationarray);
+}
+
+
+
+
+
+void neighbor_points() {
+	int i, j, ij, ij1,m,counting;
+	counting = (nx+2)*(ny+2);
+	int locationarray[counting];
+	int* storeit;
+	double radist[counting];
+	double *storedist;
+
+	for (j = 1; j<=ny; j++) {
+		for (i = 1; i<=nx; i++){
+		   ij  = i-1 + (j-1)*nx;
+		   ij1 = i + j*(nx+2);
+		   // Calculating the distance of all points from ij1
+		   storedist = alldistance(ij1);
+		   for (m=0;m<counting;m++){
+		   radist[m] = *(storedist+m);
+		   }
+		   // Sorting the distance from the ij1 for shortest distance
+		   storeit = sortradist(&radist);
+		   for(m=0; m<counting; m++){
+           locationarray[m] = *(storeit+m) ;
+		   }
+		  // if (ij1==21){
+		    // for(m=0;m<counting;m++ ){
+        		//  printf(" %d",locationarray[0] );
+            // }
+		   //}
+
+              //   printf("\n");
+		   // Assigning the neighbouring points for every interior node.
+            neighbor[ij][0] = locationarray[0];
+			neighbor[ij][1] = locationarray[1];
+			neighbor[ij][2] = locationarray[2];
+			neighbor[ij][3] = locationarray[3];
+			neighbor[ij][4] = locationarray[4];
+			neighbor[ij][5] = locationarray[5];
+			neighbor[ij][6] = locationarray[6];
+			neighbor[ij][7] = locationarray[7];
+			//printf (" %d, neighbor(%d,:) =  %d \n", ij1, ij, neighbor[ij][7]);
+                }
+            // printf(" %d %d %d %d %d %d %d %d\n",ij1,neighbor[ij][0],neighbor[ij][1],neighbor[ij][2],neighbor[ij][3],neighbor[ij][4],neighbor[ij][5],neighbor[ij][6],neighbor[ij][7] );
+		   }
+         //printf("%d, %d, %d, %d\n", i, j, ij, ij1);
+         //printf(" %d",*(closestlocation+0) );
+
+
+        // printf ("%d %d %d, neighbor(%d,:) =  %d %d %d %d %d\n", i, j, ij1, ij, neighbor[ij][0], neighbor[ij][1], neighbor[ij][2], neighbor[ij][3], neighbor[ij][4]);
+		}
+
+
+void initialise_var() {
+   /* Function to read grid coordinates
+   x[0], x[nx+1], y[0], y[ny+1] => boundary point coordinates */
+	int i, j, ij;
+   for (j = 0; j <= ny+1; j++) {
+		for (i = 0; i <= nx+1; i++) {
+			ij = i + j*(nx+2);
+         T[ij]    = 0;
+         Told[ij] = 0;
+         //printf ("%d %d %d, T = %lf, Told = %lf\n", i, j,  ij, T[ij], Told[ij]);
+		}
+	}
+}
+
+void source_term() {
+	int i, j, ij;
+   for (j = 0; j <= ny+1; j++) {
+		for (i = 0; i <= nx+1; i++) {
+			ij = i + j*(nx+2);
+         s_t[ij]    = 0;
+         //printf ("%d %d %d, S = %lf\n", i, j,  ij, s_t[ij]);
+		}
+	}
+}
+
+void coeff_mat() {
+	int i, j, k, l, ij, ij1;
+	for (i = 1; i <= nx; i++) {
+		for (j = 1; j <= ny; j++) {
+			ij = i-1 + (j-1)*nx;
+         ij1 = i + j*(nx+2);
+         //printf("%d %d %d %lf %lf\n", i, j, ij1, x[ij1], y[ij1]);
+
+			local_phi_coefficients(i, j, ij);
+
+         /* for (k = 0; k <= 7; k++){
+				for (l = 0; l <=7; l++) {
+			   	printf ("%lf, %lf, %d a[%d][%d] = %lf\n", x[ij1], y[ij1], ij1, k, l, a[k][l]);
+				}
+			}  */
+
+         //printf("%d\n", np);
+         det = determinant(a, np);
+
+         //printf("***********\n");
+			if (det == 0)
+   			printf("\nInverse of Entered Matrix is not possible\n");
+  			else
+  			cofactor(a, np);
+      	d2fd2(ij);
+         //goto test;
+      	find_coeff_A(ij);
+         //test :
+			for (k = 0; k <= 7; k++) {
+         for (l = 0; l <= 7; l++) {
+				a[k][l] = 0;
+            ainv[k][l] = 0;
+			  //printf("%d %d %lf %lf %lf a_coeff[%d][%d] = %lf\n",i, j, y[168], x[i + j*(nx+2)], y[i + j*(nx+2)],  ij, k, a_coeff[ij][k]);
+			}
+			}
+		}
+	}
+
+  //exit(0);
+}
+
+void local_phi_coefficients(int i, int j, int ij) {
+      /*printf("%d %d %d %d %d\n", neighbor[ij][0], neighbor[ij][1], neighbor[ij][2], neighbor[ij][3], neighbor[ij][4]);
+      printf("%lf %lf %lf %lf %lf\n", x[neighbor[ij][0]], x[neighbor[ij][1]], x[neighbor[ij][2]], x[neighbor[ij][3]], x[neighbor[ij][4]]);
+      printf("%lf %lf %lf %lf %lf\n", y[neighbor[ij][0]], y[neighbor[ij][1]], y[neighbor[ij][2]], y[neighbor[ij][3]], y[neighbor[ij][4]]);
+      //exit (0);*/
+        a[0][0] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][0]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][0]])/sigma,2));
+		a[0][1] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][1]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][1]])/sigma,2));
+		a[0][2] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][2]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][2]])/sigma,2));
+		a[0][3] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][3]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][3]])/sigma,2));
+		a[0][4] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][4]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][4]])/sigma,2));
+		a[0][5] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][5]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][5]])/sigma,2));
+		a[0][6] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][6]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][6]])/sigma,2));
+		a[0][7] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][7]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][7]])/sigma,2));
+
+		a[1][0] = exp(-pow((x[neighbor[ij][1]] - x[neighbor[ij][0]])/sigma,2))*exp(-pow((y[neighbor[ij][1]] - y[neighbor[ij][0]])/sigma,2));
+		a[1][1] = exp(-pow((x[neighbor[ij][1]] - x[neighbor[ij][1]])/sigma,2))*exp(-pow((y[neighbor[ij][1]] - y[neighbor[ij][1]])/sigma,2));
+		a[1][2] = exp(-pow((x[neighbor[ij][1]] - x[neighbor[ij][2]])/sigma,2))*exp(-pow((y[neighbor[ij][1]] - y[neighbor[ij][2]])/sigma,2));
+		a[1][3] = exp(-pow((x[neighbor[ij][1]] - x[neighbor[ij][3]])/sigma,2))*exp(-pow((y[neighbor[ij][1]] - y[neighbor[ij][3]])/sigma,2));
+		a[1][4] = exp(-pow((x[neighbor[ij][1]] - x[neighbor[ij][4]])/sigma,2))*exp(-pow((y[neighbor[ij][1]] - y[neighbor[ij][4]])/sigma,2));
+		a[1][5] = exp(-pow((x[neighbor[ij][1]] - x[neighbor[ij][5]])/sigma,2))*exp(-pow((y[neighbor[ij][1]] - y[neighbor[ij][5]])/sigma,2));
+		a[1][6] = exp(-pow((x[neighbor[ij][1]] - x[neighbor[ij][6]])/sigma,2))*exp(-pow((y[neighbor[ij][1]] - y[neighbor[ij][6]])/sigma,2));
+		a[1][7] = exp(-pow((x[neighbor[ij][1]] - x[neighbor[ij][7]])/sigma,2))*exp(-pow((y[neighbor[ij][1]] - y[neighbor[ij][7]])/sigma,2));
+
+        a[2][0] = exp(-pow((x[neighbor[ij][2]] - x[neighbor[ij][0]])/sigma,2))*exp(-pow((y[neighbor[ij][2]] - y[neighbor[ij][0]])/sigma,2));
+		a[2][1] = exp(-pow((x[neighbor[ij][2]] - x[neighbor[ij][1]])/sigma,2))*exp(-pow((y[neighbor[ij][2]] - y[neighbor[ij][1]])/sigma,2));
+		a[2][2] = exp(-pow((x[neighbor[ij][2]] - x[neighbor[ij][2]])/sigma,2))*exp(-pow((y[neighbor[ij][2]] - y[neighbor[ij][2]])/sigma,2));
+		a[2][3] = exp(-pow((x[neighbor[ij][2]] - x[neighbor[ij][3]])/sigma,2))*exp(-pow((y[neighbor[ij][2]] - y[neighbor[ij][3]])/sigma,2));
+		a[2][4] = exp(-pow((x[neighbor[ij][2]] - x[neighbor[ij][4]])/sigma,2))*exp(-pow((y[neighbor[ij][2]] - y[neighbor[ij][4]])/sigma,2));
+		a[2][5] = exp(-pow((x[neighbor[ij][2]] - x[neighbor[ij][5]])/sigma,2))*exp(-pow((y[neighbor[ij][2]] - y[neighbor[ij][5]])/sigma,2));
+		a[2][6] = exp(-pow((x[neighbor[ij][2]] - x[neighbor[ij][6]])/sigma,2))*exp(-pow((y[neighbor[ij][2]] - y[neighbor[ij][6]])/sigma,2));
+		a[2][7] = exp(-pow((x[neighbor[ij][2]] - x[neighbor[ij][7]])/sigma,2))*exp(-pow((y[neighbor[ij][2]] - y[neighbor[ij][7]])/sigma,2));
+
+        a[3][0] = exp(-pow((x[neighbor[ij][3]] - x[neighbor[ij][0]])/sigma,2))*exp(-pow((y[neighbor[ij][3]] - y[neighbor[ij][0]])/sigma,2));
+		a[3][1] = exp(-pow((x[neighbor[ij][3]] - x[neighbor[ij][1]])/sigma,2))*exp(-pow((y[neighbor[ij][3]] - y[neighbor[ij][1]])/sigma,2));
+		a[3][2] = exp(-pow((x[neighbor[ij][3]] - x[neighbor[ij][2]])/sigma,2))*exp(-pow((y[neighbor[ij][3]] - y[neighbor[ij][2]])/sigma,2));
+		a[3][3] = exp(-pow((x[neighbor[ij][3]] - x[neighbor[ij][3]])/sigma,2))*exp(-pow((y[neighbor[ij][3]] - y[neighbor[ij][3]])/sigma,2));
+		a[3][4] = exp(-pow((x[neighbor[ij][3]] - x[neighbor[ij][4]])/sigma,2))*exp(-pow((y[neighbor[ij][3]] - y[neighbor[ij][4]])/sigma,2));
+		a[3][5] = exp(-pow((x[neighbor[ij][3]] - x[neighbor[ij][5]])/sigma,2))*exp(-pow((y[neighbor[ij][3]] - y[neighbor[ij][5]])/sigma,2));
+		a[3][6] = exp(-pow((x[neighbor[ij][3]] - x[neighbor[ij][6]])/sigma,2))*exp(-pow((y[neighbor[ij][3]] - y[neighbor[ij][6]])/sigma,2));
+		a[3][7] = exp(-pow((x[neighbor[ij][3]] - x[neighbor[ij][7]])/sigma,2))*exp(-pow((y[neighbor[ij][3]] - y[neighbor[ij][7]])/sigma,2));
+
+        a[4][0] = exp(-pow((x[neighbor[ij][4]] - x[neighbor[ij][0]])/sigma,2))*exp(-pow((y[neighbor[ij][4]] - y[neighbor[ij][0]])/sigma,2));
+		a[4][1] = exp(-pow((x[neighbor[ij][4]] - x[neighbor[ij][1]])/sigma,2))*exp(-pow((y[neighbor[ij][4]] - y[neighbor[ij][1]])/sigma,2));
+		a[4][2] = exp(-pow((x[neighbor[ij][4]] - x[neighbor[ij][2]])/sigma,2))*exp(-pow((y[neighbor[ij][4]] - y[neighbor[ij][2]])/sigma,2));
+		a[4][3] = exp(-pow((x[neighbor[ij][4]] - x[neighbor[ij][3]])/sigma,2))*exp(-pow((y[neighbor[ij][4]] - y[neighbor[ij][3]])/sigma,2));
+		a[4][4] = exp(-pow((x[neighbor[ij][4]] - x[neighbor[ij][4]])/sigma,2))*exp(-pow((y[neighbor[ij][4]] - y[neighbor[ij][4]])/sigma,2));
+		a[4][5] = exp(-pow((x[neighbor[ij][4]] - x[neighbor[ij][5]])/sigma,2))*exp(-pow((y[neighbor[ij][4]] - y[neighbor[ij][5]])/sigma,2));
+		a[4][6] = exp(-pow((x[neighbor[ij][4]] - x[neighbor[ij][6]])/sigma,2))*exp(-pow((y[neighbor[ij][4]] - y[neighbor[ij][6]])/sigma,2));
+		a[4][7] = exp(-pow((x[neighbor[ij][4]] - x[neighbor[ij][7]])/sigma,2))*exp(-pow((y[neighbor[ij][4]] - y[neighbor[ij][7]])/sigma,2));
+
+		a[5][0] = exp(-pow((x[neighbor[ij][5]] - x[neighbor[ij][0]])/sigma,2))*exp(-pow((y[neighbor[ij][5]] - y[neighbor[ij][0]])/sigma,2));
+		a[5][1] = exp(-pow((x[neighbor[ij][5]] - x[neighbor[ij][1]])/sigma,2))*exp(-pow((y[neighbor[ij][5]] - y[neighbor[ij][1]])/sigma,2));
+		a[5][2] = exp(-pow((x[neighbor[ij][5]] - x[neighbor[ij][2]])/sigma,2))*exp(-pow((y[neighbor[ij][5]] - y[neighbor[ij][2]])/sigma,2));
+		a[5][3] = exp(-pow((x[neighbor[ij][5]] - x[neighbor[ij][3]])/sigma,2))*exp(-pow((y[neighbor[ij][5]] - y[neighbor[ij][3]])/sigma,2));
+		a[5][4] = exp(-pow((x[neighbor[ij][5]] - x[neighbor[ij][4]])/sigma,2))*exp(-pow((y[neighbor[ij][5]] - y[neighbor[ij][4]])/sigma,2));
+		a[5][5] = exp(-pow((x[neighbor[ij][5]] - x[neighbor[ij][5]])/sigma,2))*exp(-pow((y[neighbor[ij][5]] - y[neighbor[ij][5]])/sigma,2));
+		a[5][6] = exp(-pow((x[neighbor[ij][5]] - x[neighbor[ij][6]])/sigma,2))*exp(-pow((y[neighbor[ij][5]] - y[neighbor[ij][6]])/sigma,2));
+		a[5][7] = exp(-pow((x[neighbor[ij][5]] - x[neighbor[ij][7]])/sigma,2))*exp(-pow((y[neighbor[ij][5]] - y[neighbor[ij][7]])/sigma,2));
+
+		a[6][0] = exp(-pow((x[neighbor[ij][6]] - x[neighbor[ij][0]])/sigma,2))*exp(-pow((y[neighbor[ij][6]] - y[neighbor[ij][0]])/sigma,2));
+		a[6][1] = exp(-pow((x[neighbor[ij][6]] - x[neighbor[ij][1]])/sigma,2))*exp(-pow((y[neighbor[ij][6]] - y[neighbor[ij][1]])/sigma,2));
+		a[6][2] = exp(-pow((x[neighbor[ij][6]] - x[neighbor[ij][2]])/sigma,2))*exp(-pow((y[neighbor[ij][6]] - y[neighbor[ij][2]])/sigma,2));
+		a[6][3] = exp(-pow((x[neighbor[ij][6]] - x[neighbor[ij][3]])/sigma,2))*exp(-pow((y[neighbor[ij][6]] - y[neighbor[ij][3]])/sigma,2));
+		a[6][4] = exp(-pow((x[neighbor[ij][6]] - x[neighbor[ij][4]])/sigma,2))*exp(-pow((y[neighbor[ij][6]] - y[neighbor[ij][4]])/sigma,2));
+		a[6][5] = exp(-pow((x[neighbor[ij][6]] - x[neighbor[ij][5]])/sigma,2))*exp(-pow((y[neighbor[ij][6]] - y[neighbor[ij][5]])/sigma,2));
+		a[6][6] = exp(-pow((x[neighbor[ij][6]] - x[neighbor[ij][6]])/sigma,2))*exp(-pow((y[neighbor[ij][6]] - y[neighbor[ij][6]])/sigma,2));
+		a[6][7] = exp(-pow((x[neighbor[ij][6]] - x[neighbor[ij][7]])/sigma,2))*exp(-pow((y[neighbor[ij][6]] - y[neighbor[ij][7]])/sigma,2));
+
+		a[7][0] = exp(-pow((x[neighbor[ij][7]] - x[neighbor[ij][0]])/sigma,2))*exp(-pow((y[neighbor[ij][7]] - y[neighbor[ij][0]])/sigma,2));
+		a[7][1] = exp(-pow((x[neighbor[ij][7]] - x[neighbor[ij][1]])/sigma,2))*exp(-pow((y[neighbor[ij][7]] - y[neighbor[ij][1]])/sigma,2));
+		a[7][2] = exp(-pow((x[neighbor[ij][7]] - x[neighbor[ij][2]])/sigma,2))*exp(-pow((y[neighbor[ij][7]] - y[neighbor[ij][2]])/sigma,2));
+		a[7][3] = exp(-pow((x[neighbor[ij][7]] - x[neighbor[ij][3]])/sigma,2))*exp(-pow((y[neighbor[ij][7]] - y[neighbor[ij][3]])/sigma,2));
+		a[7][4] = exp(-pow((x[neighbor[ij][7]] - x[neighbor[ij][4]])/sigma,2))*exp(-pow((y[neighbor[ij][7]] - y[neighbor[ij][4]])/sigma,2));
+		a[7][5] = exp(-pow((x[neighbor[ij][7]] - x[neighbor[ij][5]])/sigma,2))*exp(-pow((y[neighbor[ij][7]] - y[neighbor[ij][5]])/sigma,2));
+		a[7][6] = exp(-pow((x[neighbor[ij][7]] - x[neighbor[ij][6]])/sigma,2))*exp(-pow((y[neighbor[ij][7]] - y[neighbor[ij][6]])/sigma,2));
+		a[7][7] = exp(-pow((x[neighbor[ij][7]] - x[neighbor[ij][7]])/sigma,2))*exp(-pow((y[neighbor[ij][7]] - y[neighbor[ij][7]])/sigma,2));
+}
+
+void d2fd2(int ij){
+
+	d2phid2[0] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][0]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][0]])/sigma,2))*(-4/pow(sigma,2) + 4*pow(x[neighbor[ij][0]] - x[neighbor[ij][0]],2)/pow(sigma,4) + 4*pow(y[neighbor[ij][0]] - y[neighbor[ij][0]],2)/pow(sigma,4));
+
+	d2phid2[1] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][1]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][1]])/sigma,2))*(-4/pow(sigma,2) + 4*pow(x[neighbor[ij][0]] - x[neighbor[ij][1]],2)/pow(sigma,4) + 4*pow(y[neighbor[ij][0]] - y[neighbor[ij][1]],2)/pow(sigma,4));
+
+	d2phid2[2] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][2]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][2]])/sigma,2))*(-4/pow(sigma,2) + 4*pow(x[neighbor[ij][0]] - x[neighbor[ij][2]],2)/pow(sigma,4) + 4*pow(y[neighbor[ij][0]] - y[neighbor[ij][2]],2)/pow(sigma,4));
+
+	d2phid2[3] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][3]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][3]])/sigma,2))*(-4/pow(sigma,2) + 4*pow(x[neighbor[ij][0]] - x[neighbor[ij][3]],2)/pow(sigma,4) + 4*pow(y[neighbor[ij][0]] - y[neighbor[ij][3]],2)/pow(sigma,4));
+
+	d2phid2[4] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][4]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][4]])/sigma,2))*(-4/pow(sigma,2) + 4*pow(x[neighbor[ij][0]] - x[neighbor[ij][4]],2)/pow(sigma,4) + 4*pow(y[neighbor[ij][0]] - y[neighbor[ij][4]],2)/pow(sigma,4));
+
+	d2phid2[5] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][5]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][5]])/sigma,2))*(-4/pow(sigma,2) + 4*pow(x[neighbor[ij][0]] - x[neighbor[ij][5]],2)/pow(sigma,4) + 4*pow(y[neighbor[ij][0]] - y[neighbor[ij][5]],2)/pow(sigma,4));
+
+	d2phid2[6] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][6]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][6]])/sigma,2))*(-4/pow(sigma,2) + 4*pow(x[neighbor[ij][0]] - x[neighbor[ij][6]],2)/pow(sigma,4) + 4*pow(y[neighbor[ij][0]] - y[neighbor[ij][6]],2)/pow(sigma,4));
+
+	d2phid2[7] = exp(-pow((x[neighbor[ij][0]] - x[neighbor[ij][7]])/sigma,2))*exp(-pow((y[neighbor[ij][0]] - y[neighbor[ij][7]])/sigma,2))*(-4/pow(sigma,2) + 4*pow(x[neighbor[ij][0]] - x[neighbor[ij][7]],2)/pow(sigma,4) + 4*pow(y[neighbor[ij][0]] - y[neighbor[ij][7]],2)/pow(sigma,4));
+
+}
+
+
+void find_coeff_A(int ij2) {
+	//printf("%d \n", ij2);
+	a_coeff[ij2][0] = d2phid2[0]*ainv[0][0] + d2phid2[1]*ainv[1][0] + d2phid2[2]*ainv[2][0] + d2phid2[3]*ainv[3][0] + d2phid2[4]*ainv[4][0] + d2phid2[5]*ainv[5][0] + d2phid2[6]*ainv[6][0] + d2phid2[7]*ainv[7][0];
+	a_coeff[ij2][1] = d2phid2[0]*ainv[0][1] + d2phid2[1]*ainv[1][1] + d2phid2[2]*ainv[2][1] + d2phid2[3]*ainv[3][1] + d2phid2[4]*ainv[4][1] + d2phid2[5]*ainv[5][1] + d2phid2[6]*ainv[6][1] + d2phid2[7]*ainv[7][1];
+	a_coeff[ij2][2] = d2phid2[0]*ainv[0][2] + d2phid2[1]*ainv[1][2] + d2phid2[2]*ainv[2][2] + d2phid2[3]*ainv[3][2] + d2phid2[4]*ainv[4][2] + d2phid2[5]*ainv[5][2] + d2phid2[6]*ainv[6][2] + d2phid2[7]*ainv[7][2];
+	a_coeff[ij2][3] = d2phid2[0]*ainv[0][3] + d2phid2[1]*ainv[1][3] + d2phid2[2]*ainv[2][3] + d2phid2[3]*ainv[3][3] + d2phid2[4]*ainv[4][3] + d2phid2[5]*ainv[5][3] + d2phid2[6]*ainv[6][3] + d2phid2[7]*ainv[7][3];
+	a_coeff[ij2][4] = d2phid2[0]*ainv[0][4] + d2phid2[1]*ainv[1][4] + d2phid2[2]*ainv[2][4] + d2phid2[3]*ainv[3][4] + d2phid2[4]*ainv[4][4] + d2phid2[5]*ainv[5][4] + d2phid2[6]*ainv[6][4] + d2phid2[7]*ainv[7][4];
+	a_coeff[ij2][5] = d2phid2[0]*ainv[0][5] + d2phid2[1]*ainv[1][5] + d2phid2[2]*ainv[2][5] + d2phid2[3]*ainv[3][5] + d2phid2[4]*ainv[4][5] + d2phid2[5]*ainv[5][5] + d2phid2[6]*ainv[6][5] + d2phid2[7]*ainv[7][5];
+	a_coeff[ij2][6] = d2phid2[0]*ainv[0][6] + d2phid2[1]*ainv[1][6] + d2phid2[2]*ainv[2][6] + d2phid2[3]*ainv[3][6] + d2phid2[4]*ainv[4][6] + d2phid2[5]*ainv[5][6] + d2phid2[6]*ainv[6][6] + d2phid2[7]*ainv[7][6];
+	a_coeff[ij2][7] = d2phid2[0]*ainv[0][7] + d2phid2[1]*ainv[1][7] + d2phid2[2]*ainv[2][7] + d2phid2[3]*ainv[3][7] + d2phid2[4]*ainv[4][7] + d2phid2[5]*ainv[5][7] + d2phid2[6]*ainv[6][7] + d2phid2[7]*ainv[7][7];
+
+   // printf("%lf\n",a_coeff[ij2][0] );
+}
+
+
+void boundary_conditions() {
+	int i, j, ij;
+	for (j = 0; j <= ny+1; j++) {
+		i = 0;
+		ij = i + j*(nx+2);
+		T[ij] = 1.0;
+      Told[ij] = 1.0;
+      //printf ("T[%d] = %lf \n", ij, T[ij]);
+		i = nx+1;
+		ij = i + j*(nx+2);
+		T[ij] = 0.0;
+      Told[ij] = 0.0;
+      //printf ("T[%d] = %lf \n", ij, T[ij]);
+	}
+
+	for (i = 0; i <= nx+1; i++) {
+		j = 0;
+		ij = i + j*(nx+2);
+		T[ij] = 0.0;
+      Told[ij] = 0.0;
+		//printf ("T[%d] = %lf \n", ij, T[ij]);
+		j = ny+1;
+		ij = i + j*(nx+2);
+		T[ij] = 0.0;
+      Told[ij] = 0.0;
+		//printf ("T[%d] = %lf \n", ij, T[ij]);
+	}
+
+
+}
+/*For calculating Determinant of the Matrix */
+double determinant(double a[8][8], int k)
+{
+  double s = 1, det, b[8][8];
+  int i, j, m, n, c;
+  det = 0;
+  if (k == 1)
+    {
+     return (a[0][0]);
+    }
+  else
+    {
+     det = 0;
+     for (c = 0; c < k; c++)
+       {
+        m = 0;
+        n = 0;
+        for (i = 0;i < k; i++)
+          {
+            for (j = 0 ;j < k; j++)
+              {
+                b[i][j] = 0;
+                if (i != 0 && j != c)
+                 {
+                   b[m][n] = a[i][j];
+                   if (n < (k - 2))
+                    n++;
+                   else
+                    {
+                     n = 0;
+                     m++;
+                     }
+                   }
+               }
+             }
+          det = det + s * (a[0][c] * determinant(b, k - 1));
+          s = -1 * s;
+          }
+    }
+ 	 //printf ("det = %lf", det);
+
+    return (det);
+}
+
+void cofactor(double num[8][8], double f)
+{
+ double b[8][8], fac[8][8];
+ int p, q, m, n, i, j;
+ for (q = 0;q < f; q++)
+ {
+   for (p = 0;p < f; p++)
+    {
+     m = 0;
+     n = 0;
+     for (i = 0;i < f; i++)
+     {
+       for (j = 0;j < f; j++)
+        {
+          if (i != q && j != p)
+          {
+            b[m][n] = num[i][j];
+            if (n < (f - 2))
+             n++;
+            else
+             {
+               n = 0;
+               m++;
+               }
+            }
+        }
+      }
+      fac[q][p] = pow(-1, q + p) * determinant(b, f - 1);
+    }
+  }
+  transpose(num, fac, f);
+}
+
+void transpose(double num[8][8], double fac[8][8], double r)
+{
+  int i, j;
+  double b[8][8],  d;
+
+  for (i = 0;i < r; i++)
+    {
+     for (j = 0;j < r; j++)
+       {
+         b[i][j] = fac[j][i];
+        }
+    }
+  d = determinant(num, r);
+  for (i = 0;i < r; i++)
+    {
+     for (j = 0;j < r; j++)
+       {
+        ainv[i][j] = b[i][j] / d;
+        }
+    }
+   /*printf("\n\n\nThe inverse of matrix is : \n");
+
+   for (i = 0;i < r; i++)
+    {
+     for (j = 0;j < r; j++)
+       {
+         printf("\t%f", ainv[i][j]);
+        }
+    printf("\n");
+     }*/
+}
+
+
+

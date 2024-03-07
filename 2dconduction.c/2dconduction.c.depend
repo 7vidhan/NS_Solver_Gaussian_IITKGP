@@ -1,0 +1,7 @@
+# depslib dependency file v1.0
+1557250358 source:g:\project summer 2019\2dconduction.c\main.c
+	<stdio.h>
+	<math.h>
+	<string.h>
+	<stdlib.h>
+

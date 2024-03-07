@@ -1,0 +1,7 @@
+# depslib dependency file v1.0
+1566037889 source:g:\project summer 2019\circular_domain\main.c
+	<stdio.h>
+	<math.h>
+	<string.h>
+	<stdlib.h>
+

@@ -1,0 +1,7 @@
+# depslib dependency file v1.0
+1563795682 source:c:\users\hp\desktop\circulardomain_main\main.c
+	<stdio.h>
+	<math.h>
+	<string.h>
+	<stdlib.h>
+
